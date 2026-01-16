@@ -69,6 +69,13 @@ namespace ImageEditorWeb.Core.Services
                 _layers = _history.Pop();
             }
         }
-
+        public void Redo() 
+        { 
+            if(_redoStack.Count > 0) 
+            {
+                _history.Push(_layers.ToList());
+                _layers = _redoStack.Pop();
+            }
+        }
     }
 }
