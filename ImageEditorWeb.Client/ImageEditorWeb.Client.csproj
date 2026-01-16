@@ -14,11 +14,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ImageEditorWeb.Shared\ImageEditorWeb.Shared.csproj" />
+	  <ProjectReference Include="..\ImageEditorWeb.Core\ImageEditorWeb.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <Folder Include="Components\" />
-    <Folder Include="Services\" />
     <Folder Include="wwwroot\js\" />
   </ItemGroup>
 
