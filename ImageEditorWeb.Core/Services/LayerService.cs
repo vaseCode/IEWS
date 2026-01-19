@@ -12,7 +12,6 @@ namespace ImageEditorWeb.Core.Services
         private List<CanvasLayer> _layers = new();
         private readonly Stack<List<CanvasLayer>> _history = new();
         private readonly Stack<List<CanvasLayer>> _redoStack = new();
-        private readonly Stack<List<CanvasLayer>> _undoStack = new();
         
         public IReadOnlyList<CanvasLayer> Layers => _layers.AsReadOnly();
         public void AddLayer(CanvasLayer layer)

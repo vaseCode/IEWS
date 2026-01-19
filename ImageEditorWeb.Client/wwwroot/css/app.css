@@ -101,3 +101,81 @@ a, .btn-link {
 code {
     color: #c02d76;
 }
+
+
+
+.image-editor {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.editor-toolbar {
+    background: #2d2d2d;
+    padding: 10px;
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+
+.tool-btn {
+    background: #404040;
+    border: none;
+    color: white;
+    width: 40px;
+    height: 40px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+    .tool-btn:hover {
+        background: #505050;
+    }
+
+    .tool-btn.active {
+        background: #0078d4;
+    }
+
+.editor-container {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.layers-panel, .properties-panel {
+    width: 250px;
+    background: #f5f5f5;
+    padding: 15px;
+    overflow-y: auto;
+    border-right: 1px solid #ddd;
+}
+
+.properties-panel {
+    border-right: none;
+    border-left: 1px solid #ddd;
+}
+
+.canvas-container {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #e0e0e0;
+    overflow: auto;
+}
+
+.layer-item {
+    transition: background-color 0.2s;
+}
+
+    .layer-item:hover {
+        background: #f0f0f0 !important;
+    }
+
+.history-controls {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #ddd;
+}

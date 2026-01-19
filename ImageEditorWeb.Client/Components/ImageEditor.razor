@@ -1,0 +1,187 @@
+﻿@using Blazor.Extensions
+@using ImageEditorWeb.Shared.Models
+@using ImageEditorWeb.Core.Services
+@using ImageEditorWeb.Core.Tools
+@using ImageEditorWeb.Client.Services
+@using Blazor.Extensions.Canvas
+@using System.Drawing
+@inject LayerService LayerService
+@inject ToolManager ToolManager
+@inject CanvasManager CanvasManager
+@inject IJSRuntime JSRuntime
+
+<div class="image-editor">
+    <div class="editor-toolbar">
+        @foreach (var tool in ToolManager.GetAllTools())
+        {
+            <button class="tool-btn @(ToolManager.GetCurrentTool()?.Name == tool.Name ? "active" : "")"
+                    @onclick="() => SelectTool(tool.Name)"
+                    title="@tool.Name">
+                <i class="@tool.Icon"></i>
+            </button>
+        }
+    </div>
+
+    <div class="editor-container">
+        <div class="layers-panel">
+            <h3>Слои</h3>
+            <button class="btn btn-primary mb-3" @onclick="AddNewLayer">
+                <i class="fas fa-plus"></i> Новый слой
+            </button>
+
+            @foreach (var layer in LayerService.Layers.OrderBy(l => l.ZIndex))
+            {
+                <div class="layer-item d-flex align-items-center mb-2 p-2 bg-white rounded">
+                    <input type="checkbox" class="me-2"
+                           checked="@layer.IsVisible"
+                           @onchange="(e) => ToggleLayerVisibility(layer.Id, (bool)e.Value)" />
+                    <span class="flex-grow-1">@layer.Name</span>
+                    <button class="btn btn-sm btn-danger"
+                            @onclick="() => RemoveLayer(layer.Id)">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            }
+        </div>
+
+        <div class="canvas-container">
+            <BECanvas @ref="canvasReference"
+                      Width="800"
+                      Height="600"
+                      @onmousedown="OnMouseDown"
+                      @onmousemove="OnMouseMove"
+                      @onmouseup="OnMouseUp" />
+        </div>
+
+        <div class="properties-panel">
+            <h3>Свойства</h3>
+
+            <div class="mb-3">
+                <label class="form-label">Размер кисти: @ToolSettings.BrushSize</label>
+                <input type="range" class="form-range" min="1" max="50"
+                       @bind="ToolSettings.BrushSize"
+                       @bind:event="oninput" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Цвет:</label>
+                <input type="color" class="form-control form-control-color"
+                       @bind="ToolSettings.ForegroundColorHex"
+                       @bind:event="oninput" />
+            </div>
+
+            <div class="history-controls">
+                <button class="btn btn-secondary me-2"
+                        @onclick="Undo"
+                        disabled="@(!LayerService.CanUndo())">
+                    <i class="fas fa-undo"></i> Отменить
+                </button>
+                <button class="btn btn-secondary"
+                        @onclick="Redo"
+                        disabled="@(!LayerService.CanRedo())">
+                    <i class="fas fa-redo"></i> Повторить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private BECanvasComponent canvasReference;
+    private ToolSettings ToolSettings { get; set; } = new ToolSettings();
+    private Point? lastMousePosition;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await CanvasManager.InitializeAsync(canvasReference);
+        }
+    }
+
+    private void SelectTool(string toolName)
+    {
+        ToolManager.SetCurrentTool(toolName);
+        StateHasChanged();
+    }
+
+    private void AddNewLayer()
+    {
+        var layer = new CanvasLayer
+        {
+            Id = Guid.NewGuid(),
+            Name = $"Слой {LayerService.Layers.Count + 1}",
+            ZIndex = LayerService.Layers.Count
+        };
+        LayerService.AddLayer(layer);
+        StateHasChanged();
+    }
+
+    private void RemoveLayer(Guid layerId)
+    {
+        LayerService.RemoveLayer(layerId);
+        StateHasChanged();
+    }
+
+    private void ToggleLayerVisibility(Guid layerId, bool isVisible)
+    {
+        var layer = LayerService.Layers.FirstOrDefault(l => l.Id == layerId);
+        if (layer != null)
+        {
+            layer.IsVisible = isVisible;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnMouseDown(MouseEventArgs e)
+    {
+        var point = new Point((int)e.OffsetX, (int)e.OffsetY);
+        lastMousePosition = point;
+
+        var tool = ToolManager.GetCurrentTool();
+        if (tool != null)
+        {
+            await tool.OnMouseDown(point, ToolSettings);
+        }
+    }
+
+    private async Task OnMouseMove(MouseEventArgs e)
+    {
+        var point = new Point((int)e.OffsetX, (int)e.OffsetY);
+
+        var tool = ToolManager.GetCurrentTool();
+        if (tool != null && lastMousePosition.HasValue)
+        {
+            await tool.OnMouseMove(point, ToolSettings);
+        }
+
+        lastMousePosition = point;
+    }
+
+    private async Task OnMouseUp(MouseEventArgs e)
+    {
+        var point = new Point((int)e.OffsetX, (int)e.OffsetY);
+
+        var tool = ToolManager.GetCurrentTool();
+        if (tool != null)
+        {
+            await tool.OnMouseUp(point, ToolSettings);
+        }
+
+        lastMousePosition = null;
+    }
+
+    private void Undo()
+    {
+        LayerService.Undo();
+        StateHasChanged();
+        // Перерисовка canvas будет добавлена позже
+    }
+
+    private void Redo()
+    {
+        LayerService.Redo();
+        StateHasChanged();
+        // Перерисовка canvas будет добавлена позже
+    }
+}

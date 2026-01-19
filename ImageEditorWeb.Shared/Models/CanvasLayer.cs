@@ -1,8 +1,8 @@
 ﻿using System;
-/*using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;*/
+using System.Threading.Tasks;
 using System.Drawing;
 
 namespace ImageEditorWeb.Shared.Models
@@ -27,9 +27,16 @@ namespace ImageEditorWeb.Shared.Models
 
     public class ToolSettings
     {
-        public Color ForegroundColor { get; set; } = Color.White;
-        public Color BackgroundColor { get; set; } = Color.Black;
-        public int BrushSize { get; set; }
+        public Color ForegroundColor { get; set; } = Color.Black;
+        public Color BackgroundColor { get; set; } = Color.White;
+        public int BrushSize { get; set; } = 5;
         public string BrushType { get; set; } = "Round";
+
+        // Добавляем свойство для hex цвета
+        public string ForegroundColorHex
+        {
+            get => ColorTranslator.ToHtml(ForegroundColor);
+            set => ForegroundColor = ColorTranslator.FromHtml(value);
+        }
     }
 }
