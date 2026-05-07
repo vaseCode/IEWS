@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ImageEditorWeb.Client</title>
+    <title>IEW Studio</title>
     <base href="/" />
     <link rel="stylesheet" href="css/bootstrap/bootstrap.min.css" />
     <link rel="stylesheet" href="css/app.css" />
@@ -22,10 +22,77 @@
     </div>
 
     <div id="blazor-error-ui">
-        An unhandled error has occurred.
-        <a href="" class="reload">Reload</a>
+        Произошла ошибка.
+        <a href="" class="reload">Перезагрузить</a>
         <a class="dismiss">🗙</a>
     </div>
+
+    <script>
+        window.iewCanvas = {
+            init(canvas, width, height, backgroundColor) {
+                canvas.width = width;
+                canvas.height = height;
+                const context = canvas.getContext('2d');
+                context.fillStyle = backgroundColor;
+                context.fillRect(0, 0, width, height);
+            },
+            clear(canvas, width, height, backgroundColor) {
+                const context = canvas.getContext('2d');
+                context.clearRect(0, 0, width, height);
+                context.fillStyle = backgroundColor;
+                context.fillRect(0, 0, width, height);
+            },
+            async drawLayer(canvas, layer) {
+                const context = canvas.getContext('2d');
+                const buffer = document.createElement('canvas');
+                buffer.width = layer.width;
+                buffer.height = layer.height;
+                const bufferContext = buffer.getContext('2d');
+
+                if (layer.imageDataUrl) {
+                    await new Promise((resolve, reject) => {
+                        const image = new Image();
+                        image.onload = () => {
+                            bufferContext.drawImage(image, 0, 0);
+                            resolve();
+                        };
+                        image.onerror = reject;
+                        image.src = layer.imageDataUrl;
+                    });
+                }
+
+                for (const stroke of layer.strokes || []) {
+                    bufferContext.save();
+                    bufferContext.beginPath();
+                    bufferContext.lineCap = 'round';
+                    bufferContext.lineJoin = 'round';
+                    bufferContext.lineWidth = stroke.size;
+                    bufferContext.globalCompositeOperation = stroke.isEraser ? 'destination-out' : 'source-over';
+                    bufferContext.strokeStyle = stroke.colorHex || '#000000';
+                    bufferContext.moveTo(stroke.x1, stroke.y1);
+                    bufferContext.lineTo(stroke.x2, stroke.y2);
+                    bufferContext.stroke();
+                    bufferContext.restore();
+                }
+
+                context.save();
+                context.globalAlpha = layer.opacity ?? 1;
+                context.drawImage(buffer, 0, 0);
+                context.restore();
+            },
+            getDataUrl(canvas, type, quality) {
+                return canvas.toDataURL(type, quality);
+            },
+            download(dataUrl, fileName) {
+                const anchor = document.createElement('a');
+                anchor.href = dataUrl;
+                anchor.download = fileName;
+                document.body.appendChild(anchor);
+                anchor.click();
+                document.body.removeChild(anchor);
+            }
+        };
+    </script>
     <script src="_framework/blazor.webassembly.js"></script>
 </body>
 

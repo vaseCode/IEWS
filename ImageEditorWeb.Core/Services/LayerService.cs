@@ -1,80 +1,251 @@
-﻿using System;
 using ImageEditorWeb.Shared.Models;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
-namespace ImageEditorWeb.Core.Services
+namespace ImageEditorWeb.Core.Services;
+
+public class LayerService
 {
-    public class LayerService
+    private List<CanvasLayer> _layers = new();
+    private readonly Stack<EditorStateSnapshot> _history = new();
+    private readonly Stack<EditorStateSnapshot> _redoStack = new();
+
+    public Guid? ActiveLayerId { get; private set; }
+    public int CanvasWidth { get; private set; } = 800;
+    public int CanvasHeight { get; private set; } = 600;
+    public IReadOnlyList<CanvasLayer> Layers => _layers.OrderBy(layer => layer.ZIndex).ToList().AsReadOnly();
+
+    public LayerService()
     {
-        private List<CanvasLayer> _layers = new();
-        private readonly Stack<List<CanvasLayer>> _history = new();
-        private readonly Stack<List<CanvasLayer>> _redoStack = new();
-        
-        public IReadOnlyList<CanvasLayer> Layers => _layers.AsReadOnly();
-        public void AddLayer(CanvasLayer layer)
+        EnsureBaseLayer();
+    }
+
+    public CanvasLayer CreateEmptyLayer(string? name = null)
+    {
+        return new CanvasLayer
         {
-            SaveState();
-            _layers.Add(layer);
-            SortLayers();
+            Id = Guid.NewGuid(),
+            Name = string.IsNullOrWhiteSpace(name) ? $"Слой {_layers.Count + 1}" : name,
+            ZIndex = _layers.Count == 0 ? 0 : _layers.Max(layer => layer.ZIndex) + 1
+        };
+    }
+
+    public CanvasLayer? GetActiveLayer()
+    {
+        return _layers.FirstOrDefault(layer => layer.Id == ActiveLayerId);
+    }
+
+    public void AddLayer(CanvasLayer layer, bool setActive = true)
+    {
+        SaveState();
+
+        layer.ZIndex = _layers.Count == 0 ? 0 : _layers.Max(existing => existing.ZIndex) + 1;
+        _layers.Add(layer);
+        NormalizeZIndexes();
+
+        if (setActive)
+        {
+            ActiveLayerId = layer.Id;
         }
-        public void RemoveLayer(Guid layerId)
+    }
+
+    public void RemoveLayer(Guid layerId)
+    {
+        if (_layers.All(layer => layer.Id != layerId))
         {
-            SaveState();
-            _layers.RemoveAll(I => I.Id == layerId);
+            return;
         }
 
-        public void MoveLayerUp(Guid layerId)
+        SaveState();
+        _layers.RemoveAll(layer => layer.Id == layerId);
+        NormalizeZIndexes();
+
+        if (ActiveLayerId == layerId)
         {
-            SaveState();
-            var layer = _layers.FirstOrDefault(I => I.Id == layerId);
-            if (layer != null)
-            {
-                layer.ZIndex++;
-                SortLayers();
-            }
+            ActiveLayerId = _layers.OrderByDescending(layer => layer.ZIndex).FirstOrDefault()?.Id;
         }
 
-        private void SortLayers()
-        {
-            _layers = _layers.OrderBy(I => I.ZIndex).ToList();
-        }
-        private void SaveState()
-        {
-            var stateCopy = _layers.Select(I => new CanvasLayer
-            {
-                Id = I.Id,
-                Name = I.Name,
-                ImageData = I.ImageData?.ToArray(),
-                ZIndex = I.ZIndex,
-                Opacity = I.Opacity,
-                IsVisible = I.IsVisible
-            }).ToList();
+        EnsureBaseLayer();
+    }
 
-            _history.Push(stateCopy);
-            _redoStack.Clear();
-        }
-
-        public bool CanUndo() => _history.Count > 0;
-        public bool CanRedo() => _redoStack.Count > 0;
-
-        public void Undo()
+    public void SetActiveLayer(Guid layerId)
+    {
+        if (_layers.Any(layer => layer.Id == layerId))
         {
-            if (_history.Count > 0)
-            {
-                _redoStack.Push(_layers.ToList());
-                _layers = _history.Pop();
-            }
+            ActiveLayerId = layerId;
         }
-        public void Redo() 
-        { 
-            if(_redoStack.Count > 0) 
-            {
-                _history.Push(_layers.ToList());
-                _layers = _redoStack.Pop();
-            }
+    }
+
+    public void RenameLayer(Guid layerId, string name)
+    {
+        var layer = _layers.FirstOrDefault(item => item.Id == layerId);
+        if (layer == null)
+        {
+            return;
         }
+
+        SaveState();
+        layer.Name = string.IsNullOrWhiteSpace(name) ? layer.Name : name.Trim();
+    }
+
+    public void ToggleLayerVisibility(Guid layerId, bool isVisible)
+    {
+        var layer = _layers.FirstOrDefault(item => item.Id == layerId);
+        if (layer == null)
+        {
+            return;
+        }
+
+        SaveState();
+        layer.IsVisible = isVisible;
+    }
+
+    public void SetLayerOpacity(Guid layerId, double opacity)
+    {
+        var layer = _layers.FirstOrDefault(item => item.Id == layerId);
+        if (layer == null)
+        {
+            return;
+        }
+
+        SaveState();
+        layer.Opacity = Math.Clamp(opacity, 0d, 1d);
+    }
+
+    public void MoveLayerUp(Guid layerId)
+    {
+        var ordered = _layers.OrderBy(layer => layer.ZIndex).ToList();
+        var index = ordered.FindIndex(layer => layer.Id == layerId);
+        if (index < 0 || index >= ordered.Count - 1)
+        {
+            return;
+        }
+
+        SaveState();
+        (ordered[index].ZIndex, ordered[index + 1].ZIndex) = (ordered[index + 1].ZIndex, ordered[index].ZIndex);
+        NormalizeZIndexes();
+    }
+
+    public void MoveLayerDown(Guid layerId)
+    {
+        var ordered = _layers.OrderBy(layer => layer.ZIndex).ToList();
+        var index = ordered.FindIndex(layer => layer.Id == layerId);
+        if (index <= 0)
+        {
+            return;
+        }
+
+        SaveState();
+        (ordered[index].ZIndex, ordered[index - 1].ZIndex) = (ordered[index - 1].ZIndex, ordered[index].ZIndex);
+        NormalizeZIndexes();
+    }
+
+    public void SetLayerImage(Guid layerId, string dataUrl)
+    {
+        var layer = _layers.FirstOrDefault(item => item.Id == layerId);
+        if (layer == null)
+        {
+            return;
+        }
+
+        SaveState();
+        layer.ImageDataUrl = dataUrl;
+        layer.Strokes.Clear();
+    }
+
+    public void AddStrokeToActiveLayer(StrokeLine stroke)
+    {
+        var activeLayer = GetActiveLayer();
+        if (activeLayer == null)
+        {
+            return;
+        }
+
+        activeLayer.Strokes.Add(stroke);
+    }
+
+    public void SaveCheckpoint()
+    {
+        SaveState();
+    }
+
+    public bool CanUndo() => _history.Count > 0;
+    public bool CanRedo() => _redoStack.Count > 0;
+
+    public void Undo()
+    {
+        if (_history.Count == 0)
+        {
+            return;
+        }
+
+        _redoStack.Push(CreateSnapshot());
+        RestoreSnapshot(_history.Pop());
+    }
+
+    public void Redo()
+    {
+        if (_redoStack.Count == 0)
+        {
+            return;
+        }
+
+        _history.Push(CreateSnapshot());
+        RestoreSnapshot(_redoStack.Pop());
+    }
+
+    private void EnsureBaseLayer()
+    {
+        if (_layers.Count > 0)
+        {
+            return;
+        }
+
+        var layer = CreateEmptyLayer("Слой 1");
+        layer.ZIndex = 0;
+        _layers.Add(layer);
+        ActiveLayerId = layer.Id;
+    }
+
+    private void NormalizeZIndexes()
+    {
+        _layers = _layers.OrderBy(layer => layer.ZIndex).ToList();
+        for (var i = 0; i < _layers.Count; i++)
+        {
+            _layers[i].ZIndex = i;
+        }
+    }
+
+    private void SaveState()
+    {
+        _history.Push(CreateSnapshot());
+        _redoStack.Clear();
+    }
+
+    private EditorStateSnapshot CreateSnapshot()
+    {
+        return new EditorStateSnapshot
+        {
+            ActiveLayerId = ActiveLayerId,
+            CanvasWidth = CanvasWidth,
+            CanvasHeight = CanvasHeight,
+            Layers = _layers.Select(layer => layer.Clone()).ToList()
+        };
+    }
+
+    private void RestoreSnapshot(EditorStateSnapshot snapshot)
+    {
+        _layers = snapshot.Layers.Select(layer => layer.Clone()).ToList();
+        ActiveLayerId = snapshot.ActiveLayerId;
+        CanvasWidth = snapshot.CanvasWidth;
+        CanvasHeight = snapshot.CanvasHeight;
+        EnsureBaseLayer();
+        NormalizeZIndexes();
+    }
+
+    private sealed class EditorStateSnapshot
+    {
+        public List<CanvasLayer> Layers { get; init; } = new();
+        public Guid? ActiveLayerId { get; init; }
+        public int CanvasWidth { get; init; }
+        public int CanvasHeight { get; init; }
     }
 }

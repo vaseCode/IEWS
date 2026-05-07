@@ -1,187 +1,286 @@
-﻿@using Blazor.Extensions
-@using ImageEditorWeb.Shared.Models
-@using ImageEditorWeb.Core.Services
-@using ImageEditorWeb.Core.Tools
-@using ImageEditorWeb.Client.Services
-@using Blazor.Extensions.Canvas
-@using System.Drawing
 @inject LayerService LayerService
 @inject ToolManager ToolManager
 @inject CanvasManager CanvasManager
-@inject IJSRuntime JSRuntime
+@inject ImageImportService ImageImportService
 
 <div class="image-editor">
     <div class="editor-toolbar">
-        @foreach (var tool in ToolManager.GetAllTools())
-        {
-            <button class="tool-btn @(ToolManager.GetCurrentTool()?.Name == tool.Name ? "active" : "")"
-                    @onclick="() => SelectTool(tool.Name)"
-                    title="@tool.Name">
-                <i class="@tool.Icon"></i>
-            </button>
-        }
+        <div class="toolbar-group">
+            <label class="btn btn-primary btn-sm mb-0 upload-button">
+                Загрузить
+                <InputFile OnChange="OnInputFileChange" accept="image/png,image/jpeg,image/webp" class="d-none" />
+            </label>
+            <button class="btn btn-primary btn-sm" @onclick="AddNewLayer">Новый слой</button>
+            <button class="btn btn-success btn-sm" @onclick="SaveAsPng">Сохранить PNG</button>
+        </div>
+
+        <div class="toolbar-group">
+            @foreach (var tool in ToolManager.GetAllTools())
+            {
+                <button class="tool-btn @(ToolManager.GetCurrentTool()?.Name == tool.Name ? "active" : string.Empty)"
+                        @onclick="() => SelectTool(tool.Name)"
+                        title="@tool.Name">
+                    <span>@tool.Icon</span>
+                    <span class="tool-name">@tool.Name</span>
+                </button>
+            }
+        </div>
     </div>
 
     <div class="editor-container">
-        <div class="layers-panel">
+        <aside class="layers-panel">
             <h3>Слои</h3>
-            <button class="btn btn-primary mb-3" @onclick="AddNewLayer">
-                <i class="fas fa-plus"></i> Новый слой
-            </button>
 
-            @foreach (var layer in LayerService.Layers.OrderBy(l => l.ZIndex))
+            @foreach (var layer in LayerService.Layers.OrderByDescending(layer => layer.ZIndex))
             {
-                <div class="layer-item d-flex align-items-center mb-2 p-2 bg-white rounded">
-                    <input type="checkbox" class="me-2"
-                           checked="@layer.IsVisible"
-                           @onchange="(e) => ToggleLayerVisibility(layer.Id, (bool)e.Value)" />
-                    <span class="flex-grow-1">@layer.Name</span>
-                    <button class="btn btn-sm btn-danger"
-                            @onclick="() => RemoveLayer(layer.Id)">
-                        <i class="fas fa-times"></i>
-                    </button>
+                <div class="layer-item @(LayerService.ActiveLayerId == layer.Id ? "active-layer" : string.Empty)"
+                     @onclick="() => SelectLayer(layer.Id)">
+                    <div class="layer-item-top">
+                        <input type="checkbox"
+                               checked="@layer.IsVisible"
+                               @onclick:stopPropagation="true"
+                               @onchange="@(async args => await ToggleLayerVisibility(layer.Id, args))" />
+                        <input class="layer-name"
+                               value="@layer.Name"
+                               @onclick:stopPropagation="true"
+                               @onchange="@(async args => await RenameLayer(layer.Id, args.Value?.ToString() ?? layer.Name))" />
+                    </div>
+
+                    <div class="layer-actions">
+                        <button class="btn btn-outline-secondary btn-sm" @onclick:stopPropagation="true" @onclick="() => MoveLayerUp(layer.Id)">↑</button>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick:stopPropagation="true" @onclick="() => MoveLayerDown(layer.Id)">↓</button>
+                        <button class="btn btn-outline-danger btn-sm" @onclick:stopPropagation="true" @onclick="() => RemoveLayer(layer.Id)">Удалить</button>
+                    </div>
                 </div>
             }
-        </div>
+        </aside>
 
-        <div class="canvas-container">
-            <BECanvas @ref="canvasReference"
-                      Width="800"
-                      Height="600"
-                      @onmousedown="OnMouseDown"
-                      @onmousemove="OnMouseMove"
-                      @onmouseup="OnMouseUp" />
-        </div>
+        <section class="canvas-container">
+            <canvas @ref="canvasReference"
+                    class="editor-canvas"
+                    width="@LayerService.CanvasWidth"
+                    height="@LayerService.CanvasHeight"
+                    @onmousedown="OnMouseDown"
+                    @onmousemove="OnMouseMove"
+                    @onmouseup="OnMouseUp"
+                    @onmouseleave="OnMouseLeave"></canvas>
+        </section>
 
-        <div class="properties-panel">
+        <aside class="properties-panel">
             <h3>Свойства</h3>
 
-            <div class="mb-3">
-                <label class="form-label">Размер кисти: @ToolSettings.BrushSize</label>
-                <input type="range" class="form-range" min="1" max="50"
+            <div class="property-block">
+                <div class="property-label">Активный слой</div>
+                <div class="property-value">@LayerService.GetActiveLayer()?.Name</div>
+            </div>
+
+            <div class="property-block">
+                <label class="form-label">Размер инструмента: @ToolSettings.BrushSize</label>
+                <input type="range" class="form-range" min="1" max="64"
                        @bind="ToolSettings.BrushSize"
                        @bind:event="oninput" />
             </div>
 
-            <div class="mb-3">
-                <label class="form-label">Цвет:</label>
+            <div class="property-block">
+                <label class="form-label">Основной цвет</label>
                 <input type="color" class="form-control form-control-color"
-                       @bind="ToolSettings.ForegroundColor"
+                       @bind="ToolSettings.ForegroundColorHex"
                        @bind:event="oninput" />
             </div>
+
+            @if (LayerService.GetActiveLayer() is CanvasLayer activeLayer)
+            {
+                <div class="property-block">
+                    <label class="form-label">Прозрачность слоя: @activeLayer.Opacity.ToString("0.00")</label>
+                    <input type="range" class="form-range" min="0" max="1" step="0.05"
+                           value="@activeLayer.Opacity"
+                           @onchange="@(async args => await ChangeOpacity(activeLayer.Id, args.Value?.ToString()))" />
+                </div>
+            }
 
             <div class="history-controls">
                 <button class="btn btn-secondary me-2"
                         @onclick="Undo"
                         disabled="@(!LayerService.CanUndo())">
-                    <i class="fas fa-undo"></i> Отменить
+                    Отменить
                 </button>
                 <button class="btn btn-secondary"
                         @onclick="Redo"
                         disabled="@(!LayerService.CanRedo())">
-                    <i class="fas fa-redo"></i> Повторить
+                    Повторить
                 </button>
             </div>
-        </div>
+        </aside>
     </div>
 </div>
 
 @code {
-    private BECanvasComponent canvasReference;
-    private ToolSettings ToolSettings { get; set; } = new ToolSettings();
-    private Point? lastMousePosition;
+    private ElementReference canvasReference;
+    private readonly ToolSettings ToolSettings = new();
+    private bool _canvasReady;
+    private bool _isMouseDown;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
-            await CanvasManager.InitializeAsync(canvasReference);
+            await CanvasManager.InitializeAsync(canvasReference, LayerService.CanvasWidth, LayerService.CanvasHeight);
+            _canvasReady = true;
+            await RefreshCanvasAsync();
         }
     }
 
-    private void SelectTool(string toolName)
+    private async Task RefreshCanvasAsync()
+    {
+        if (!_canvasReady)
+        {
+            return;
+        }
+
+        await CanvasManager.DrawAllLayersAsync(LayerService.Layers);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SelectTool(string toolName)
     {
         ToolManager.SetCurrentTool(toolName);
-        StateHasChanged();
+        await RefreshCanvasAsync();
     }
 
-    private void AddNewLayer()
+    private async Task AddNewLayer()
     {
-        var layer = new CanvasLayer
-        {
-            Id = Guid.NewGuid(),
-            Name = $"Слой {LayerService.Layers.Count + 1}",
-            ZIndex = LayerService.Layers.Count
-        };
-        LayerService.AddLayer(layer);
-        StateHasChanged();
+        LayerService.AddLayer(LayerService.CreateEmptyLayer());
+        await RefreshCanvasAsync();
     }
 
-    private void RemoveLayer(Guid layerId)
+    private async Task RemoveLayer(Guid layerId)
     {
         LayerService.RemoveLayer(layerId);
-        StateHasChanged();
+        await RefreshCanvasAsync();
     }
 
-    private void ToggleLayerVisibility(Guid layerId, bool isVisible)
+    private async Task MoveLayerUp(Guid layerId)
     {
-        var layer = LayerService.Layers.FirstOrDefault(l => l.Id == layerId);
-        if (layer != null)
+        LayerService.MoveLayerUp(layerId);
+        await RefreshCanvasAsync();
+    }
+
+    private async Task MoveLayerDown(Guid layerId)
+    {
+        LayerService.MoveLayerDown(layerId);
+        await RefreshCanvasAsync();
+    }
+
+    private async Task RenameLayer(Guid layerId, string name)
+    {
+        LayerService.RenameLayer(layerId, name);
+        await RefreshCanvasAsync();
+    }
+
+    private async Task ToggleLayerVisibility(Guid layerId, ChangeEventArgs args)
+    {
+        var isVisible = args.Value switch
         {
-            layer.IsVisible = isVisible;
-            StateHasChanged();
+            bool value => value,
+            string text when bool.TryParse(text, out var parsed) => parsed,
+            _ => false
+        };
+        LayerService.ToggleLayerVisibility(layerId, isVisible);
+        await RefreshCanvasAsync();
+    }
+
+    private async Task SelectLayer(Guid layerId)
+    {
+        LayerService.SetActiveLayer(layerId);
+        await RefreshCanvasAsync();
+    }
+
+    private async Task ChangeOpacity(Guid layerId, string? value)
+    {
+        if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var opacity))
+        {
+            LayerService.SetLayerOpacity(layerId, opacity);
+            await RefreshCanvasAsync();
         }
     }
 
-    private async Task OnMouseDown(MouseEventArgs e)
+    private async Task OnInputFileChange(InputFileChangeEventArgs args)
     {
-        var point = new Point((int)e.OffsetX, (int)e.OffsetY);
-        lastMousePosition = point;
+        var file = args.File;
+        var dataUrl = await ImageImportService.ReadAsDataUrlAsync(file);
+        var layer = LayerService.CreateEmptyLayer(Path.GetFileNameWithoutExtension(file.Name));
+        layer.ImageDataUrl = dataUrl;
+        LayerService.AddLayer(layer);
+        await RefreshCanvasAsync();
+    }
 
+    private async Task OnMouseDown(MouseEventArgs args)
+    {
+        _isMouseDown = true;
+        var point = new EditorPoint((int)args.OffsetX, (int)args.OffsetY);
         var tool = ToolManager.GetCurrentTool();
         if (tool != null)
         {
-            await tool.OnMouseDown(point, ToolSettings);
+            await tool.OnMouseDown(point, ToolSettings, LayerService);
+            await RefreshCanvasAsync();
         }
     }
 
-    private async Task OnMouseMove(MouseEventArgs e)
+    private async Task OnMouseMove(MouseEventArgs args)
     {
-        var point = new Point((int)e.OffsetX, (int)e.OffsetY);
-
-        var tool = ToolManager.GetCurrentTool();
-        if (tool != null && lastMousePosition.HasValue)
+        if (!_isMouseDown)
         {
-            await tool.OnMouseMove(point, ToolSettings);
+            return;
         }
 
-        lastMousePosition = point;
-    }
-
-    private async Task OnMouseUp(MouseEventArgs e)
-    {
-        var point = new Point((int)e.OffsetX, (int)e.OffsetY);
-
+        var point = new EditorPoint((int)args.OffsetX, (int)args.OffsetY);
         var tool = ToolManager.GetCurrentTool();
         if (tool != null)
         {
-            await tool.OnMouseUp(point, ToolSettings);
+            await tool.OnMouseMove(point, ToolSettings, LayerService);
+            await RefreshCanvasAsync();
         }
-
-        lastMousePosition = null;
     }
 
-    private void Undo()
+    private async Task OnMouseUp(MouseEventArgs args)
+    {
+        if (!_isMouseDown)
+        {
+            return;
+        }
+
+        _isMouseDown = false;
+        var point = new EditorPoint((int)args.OffsetX, (int)args.OffsetY);
+        var tool = ToolManager.GetCurrentTool();
+        if (tool != null)
+        {
+            await tool.OnMouseUp(point, ToolSettings, LayerService);
+            await RefreshCanvasAsync();
+        }
+    }
+
+    private async Task OnMouseLeave(MouseEventArgs args)
+    {
+        if (_isMouseDown)
+        {
+            await OnMouseUp(args);
+        }
+    }
+
+    private async Task Undo()
     {
         LayerService.Undo();
-        StateHasChanged();
-        // Перерисовка canvas будет добавлена позже
+        await RefreshCanvasAsync();
     }
 
-    private void Redo()
+    private async Task Redo()
     {
         LayerService.Redo();
-        StateHasChanged();
-        // Перерисовка canvas будет добавлена позже
+        await RefreshCanvasAsync();
+    }
+
+    private async Task SaveAsPng()
+    {
+        await CanvasManager.DownloadPngAsync($"iew-studio-{DateTime.Now:yyyyMMdd-HHmmss}.png");
     }
 }

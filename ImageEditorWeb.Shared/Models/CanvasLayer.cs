@@ -1,42 +1,70 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Drawing;
+namespace ImageEditorWeb.Shared.Models;
 
-namespace ImageEditorWeb.Shared.Models
+public class CanvasLayer
 {
-    public class CanvasLayer
-    {
-        public Guid Id { get; set; }
-        public string Name { get; set; }
-        public bool IsVisible { get; set; } = true;
-        public float Opacity { get; set; } = 1.0f;
-        public int ZIndex { get; set; }
-        public byte[] ImageData { get; set; }
-    }
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsVisible { get; set; } = true;
+    public double Opacity { get; set; } = 1.0;
+    public int ZIndex { get; set; }
+    public string? ImageDataUrl { get; set; }
+    public List<StrokeLine> Strokes { get; set; } = new();
 
-    public class EditorState
-    {
-        public List<CanvasLayer> Layers { get; set; } = new();
-        public int ActiveLayerIndex { get; set; }
-        public Size CanvasSize { get; set; }
-        public string CurrentTool { get; set; }
-    }
+    public bool HasContent => !string.IsNullOrWhiteSpace(ImageDataUrl) || Strokes.Count > 0;
 
-    public class ToolSettings
+    public CanvasLayer Clone()
     {
-        public Color ForegroundColor { get; set; } = Color.Black;
-        public Color BackgroundColor { get; set; } = Color.White;
-        public int BrushSize { get; set; } = 5;
-        public string BrushType { get; set; } = "Round";
-
-        // Добавляем свойство для hex цвета
-        public string ForegroundColorHex
+        return new CanvasLayer
         {
-            get => ColorTranslator.ToHtml(ForegroundColor);
-            set => ForegroundColor = ColorTranslator.FromHtml(value);
-        }
+            Id = Id,
+            Name = Name,
+            IsVisible = IsVisible,
+            Opacity = Opacity,
+            ZIndex = ZIndex,
+            ImageDataUrl = ImageDataUrl,
+            Strokes = Strokes.Select(stroke => stroke.Clone()).ToList()
+        };
     }
+}
+
+public class StrokeLine
+{
+    public int X1 { get; set; }
+    public int Y1 { get; set; }
+    public int X2 { get; set; }
+    public int Y2 { get; set; }
+    public int Size { get; set; } = 5;
+    public string ColorHex { get; set; } = "#000000";
+    public bool IsEraser { get; set; }
+
+    public StrokeLine Clone()
+    {
+        return new StrokeLine
+        {
+            X1 = X1,
+            Y1 = Y1,
+            X2 = X2,
+            Y2 = Y2,
+            Size = Size,
+            ColorHex = ColorHex,
+            IsEraser = IsEraser
+        };
+    }
+}
+
+public class EditorState
+{
+    public List<CanvasLayer> Layers { get; set; } = new();
+    public Guid? ActiveLayerId { get; set; }
+    public int CanvasWidth { get; set; } = 800;
+    public int CanvasHeight { get; set; } = 600;
+    public string CurrentTool { get; set; } = "Кисть";
+}
+
+public class ToolSettings
+{
+    public string ForegroundColorHex { get; set; } = "#000000";
+    public string BackgroundColorHex { get; set; } = "#FFFFFF";
+    public int BrushSize { get; set; } = 5;
+    public string BrushType { get; set; } = "Round";
 }

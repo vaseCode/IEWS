@@ -1,207 +1,88 @@
-﻿using Blazor.Extensions;
-using Blazor.Extensions.Canvas;
-using Blazor.Extensions.Canvas.Canvas2D;
 using ImageEditorWeb.Shared.Models;
+using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 
-namespace ImageEditorWeb.Client.Services
+namespace ImageEditorWeb.Client.Services;
+
+public class CanvasManager
 {
-    public class CanvasManager
+    private readonly IJSRuntime _jsRuntime;
+    private ElementReference _canvas;
+    private bool _initialized;
+    private int _width = 800;
+    private int _height = 600;
+
+    public CanvasManager(IJSRuntime jsRuntime)
     {
-        private readonly IJSRuntime _jsRuntime;
-        private Canvas2DContext _context;
-        private BECanvasComponent _canvas;
+        _jsRuntime = jsRuntime;
+    }
 
-        public CanvasManager(IJSRuntime jsRuntime)
+    public async Task InitializeAsync(ElementReference canvas, int width = 800, int height = 600)
+    {
+        _canvas = canvas;
+        _width = width;
+        _height = height;
+        _initialized = true;
+
+        await _jsRuntime.InvokeVoidAsync("iewCanvas.init", _canvas, _width, _height, "#ffffff");
+    }
+
+    public async Task DrawAllLayersAsync(IEnumerable<CanvasLayer> layers)
+    {
+        if (!_initialized)
         {
-            _jsRuntime = jsRuntime;
+            return;
         }
 
-        public async Task InitializeAsync(BECanvasComponent canvas)
+        await ClearCanvasAsync();
+
+        foreach (var layer in layers.OrderBy(layer => layer.ZIndex))
         {
-            _canvas = canvas;
-            _context = await _canvas.CreateCanvas2DAsync();
-
-            // Инициализация
-            await _context.SetFillStyleAsync("white");
-            await _context.FillRectAsync(0, 0, 800, 600);
-        }
-
-        public async Task DrawLayer(CanvasLayer layer)
-        {
-            if (!layer.IsVisible || layer.ImageData == null)
-                return;
-
-            await _context.SaveAsync();
-            await _context.SetGlobalAlphaAsync(layer.Opacity);
-
-            // Здесь будет логика отрисовки изображения
-            // Временная реализация
-            await _context.RestoreAsync();
-        }
-
-        public async Task DrawAllLayers(IEnumerable<CanvasLayer> layers)
-        {
-            await ClearCanvas();
-            foreach (var layer in layers.OrderBy(l => l.ZIndex))
+            if (!layer.IsVisible)
             {
-                await DrawLayer(layer);
+                continue;
             }
+
+            var payload = new
+            {
+                width = _width,
+                height = _height,
+                opacity = layer.Opacity,
+                imageDataUrl = layer.ImageDataUrl,
+                strokes = layer.Strokes.Select(stroke => new
+                {
+                    x1 = stroke.X1,
+                    y1 = stroke.Y1,
+                    x2 = stroke.X2,
+                    y2 = stroke.Y2,
+                    size = stroke.Size,
+                    colorHex = stroke.ColorHex,
+                    isEraser = stroke.IsEraser
+                }).ToList()
+            };
+
+            await _jsRuntime.InvokeVoidAsync("iewCanvas.drawLayer", _canvas, payload);
+        }
+    }
+
+    public async Task ClearCanvasAsync()
+    {
+        if (!_initialized)
+        {
+            return;
         }
 
-        private async Task ClearCanvas()
+        await _jsRuntime.InvokeVoidAsync("iewCanvas.clear", _canvas, _width, _height, "#ffffff");
+    }
+
+    public async Task DownloadPngAsync(string fileName)
+    {
+        if (!_initialized)
         {
-            await _context.SetFillStyleAsync("white");
-            await _context.FillRectAsync(0, 0, 800, 600);
+            return;
         }
 
-        // Метод для отрисовки точки
-        public async Task DrawPoint(int x, int y, int size, string color)
-        {
-            await _context.BeginPathAsync();
-            await _context.ArcAsync(x, y, size / 2, 0, Math.PI * 2);
-            await _context.SetFillStyleAsync(color);
-            await _context.FillAsync();
-        }
-
-        // Метод для отрисовки линии
-        public async Task DrawLine(int x1, int y1, int x2, int y2, int size, string color)
-        {
-            await _context.BeginPathAsync();
-            await _context.MoveToAsync(x1, y1);
-            await _context.LineToAsync(x2, y2);
-            await _context.SetStrokeStyleAsync(color);
-            await _context.SetLineWidthAsync(size);
-            await _context.SetLineCapAsync(LineCap.Round);
-            await _context.StrokeAsync();
-        }
+        var dataUrl = await _jsRuntime.InvokeAsync<string>("iewCanvas.getDataUrl", _canvas, "image/png", 1.0);
+        await _jsRuntime.InvokeVoidAsync("iewCanvas.download", dataUrl, fileName);
     }
 }
-/*using Blazor.Extensions;
-using Blazor.Extensions.Canvas.Canvas2D;
-using ImageEditorWeb.Shared.Models;
-using Microsoft.JSInterop;
-using System;
-using System.Threading.Tasks;
-using System.Linq;
-
-namespace ImageEditorWeb.Client.Services
-{
-    public class CanvasManager : IAsyncDisposable
-    {
-        private readonly IJSRuntime _jsRuntime;
-        private Canvas2DContext _context;
-        private BECanvasComponent _canvas;
-
-        public CanvasManager(IJSRuntime jsRuntime)
-        {
-            _jsRuntime = jsRuntime;
-        }
-
-        public async Task InitializeAsync(string canvasId, BECanvasComponent canvas)
-        {
-            _canvas = canvas;
-            _context = await _canvas.CreateCanvas2DAsync();
-
-            // Инициализация
-            await _context.SetFillStyleAsync("white");
-            await _context.FillRectAsync(0, 0, 800, 600);
-        }
-
-        public async Task DrawLayer(CanvasLayer layer)
-        {
-            if (!layer.IsVisible || layer.ImageData == null)
-                return;
-
-            await _context.SaveAsync();
-            await _context.SetGlobalAlphaAsync(layer.Opacity);
-
-            // Здесь будет логика отрисовки изображения
-            // Временная реализация
-            await _context.RestoreAsync();
-        }
-
-        public async Task DrawAllLayers(IEnumerable<CanvasLayer> layers)
-        {
-            await ClearCanvas();
-            foreach (var layer in layers.OrderBy(l => l.ZIndex))
-            {
-                await DrawLayer(layer);
-            }
-        }
-
-        private async Task ClearCanvas()
-        {
-            await _context.SetFillStyleAsync("white");
-            await _context.FillRectAsync(0, 0, 800, 600);
-        }
-
-        public ValueTask DisposeAsync()
-        {
-            return ValueTask.CompletedTask;
-        }
-    }
-}*/
-/*using Blazor.Extensions;
-using Blazor.Extensions.Canvas.Canvas2D;
-using ImageEditorWeb.Shared.Models;
-using Microsoft.JSInterop;
-using System;
-using System.Threading.Tasks;
-
-namespace ImageEditorWeb.Client.Services
-{
-    public class CanvasManager : IAsyncDisposable
-    {
-        private readonly IJSRuntime _jsRuntime;
-        private Canvas2DContext _context;
-        private BECanvasComponent _canvas;
-        public CanvasManager(IJSRuntime jSRuntime)
-        {
-            _jsRuntime =jSRuntime;
-        }
-        public async Task InitializeAsync(string canvasId, BECanvasComponent canvas)
-        {
-            _canvas = canvas;
-            _context = await _canvas.CreateCanvas2DAsync();
-
-            await _context.SetFillStyleAsync("white");
-            await _context.FillRectAsync(0, 0, 800, 600);
-        }
-        public async Task DrawLayer(CanvasLayer layer)
-        {
-            if(!layer.IsVisible||layer.ImageData == null) 
-            { 
-                return; 
-            }  
-            await _context.SaveAsync();
-            await _context.SetGlobalAlphaAsync(layer.Opacity);
-
-
-
-            await _context.RestoreAsync();
-        }
-        public async Task DrawAllLayers(IEnumerable<CanvasLayer> layers)
-        {
-            await ClearCanvas();
-            foreach (var layer in layers.OrderBy(I => I.ZIndex)) 
-            {
-                await DrawLayer(layer);
-            }
-        }
-        private async Task ClearCanvas()
-        {
-            await _context.SetFillStyleAsync("white");
-            await _context.FillRectAsync(0, 0, 800, 600);
-        }
-        public async ValueTask DisposeAsync()
-        {
-            if (_context != null)
-                await _context.DisposeAsync();            
-        }
-    }
-}*/
