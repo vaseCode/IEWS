@@ -28,7 +28,7 @@ public class BrushTool : BaseTool
     private bool _isDrawing;
 
     public override string Name => "Кисть";
-    public override string Icon => "🖌️";
+    public override string Icon => "";
     public override ToolType Type => ToolType.Brush;
 
     public override Task OnMouseDown(EditorPoint position, ToolSettings settings, LayerService layerService)
@@ -84,7 +84,7 @@ public class EraserTool : BaseTool
     private bool _isDrawing;
 
     public override string Name => "Ластик";
-    public override string Icon => "🧽";
+    public override string Icon => "";
     public override ToolType Type => ToolType.Eraser;
 
     public override Task OnMouseDown(EditorPoint position, ToolSettings settings, LayerService layerService)

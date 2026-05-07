@@ -20,7 +20,6 @@
                 <button class="tool-btn @(ToolManager.GetCurrentTool()?.Name == tool.Name ? "active" : string.Empty)"
                         @onclick="() => SelectTool(tool.Name)"
                         title="@tool.Name">
-                    <span>@tool.Icon</span>
                     <span class="tool-name">@tool.Name</span>
                 </button>
             }
