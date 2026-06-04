@@ -8,6 +8,7 @@ public class CanvasLayer
     public double Opacity { get; set; } = 1.0;
     public int ZIndex { get; set; }
     public string? ImageDataUrl { get; set; }
+    public LayerFilterSettings Filters { get; set; } = new();
     public List<StrokeLine> Strokes { get; set; } = new();
 
     public bool HasContent => !string.IsNullOrWhiteSpace(ImageDataUrl) || Strokes.Count > 0;
@@ -22,7 +23,25 @@ public class CanvasLayer
             Opacity = Opacity,
             ZIndex = ZIndex,
             ImageDataUrl = ImageDataUrl,
+            Filters = Filters.Clone(),
             Strokes = Strokes.Select(stroke => stroke.Clone()).ToList()
+        };
+    }
+}
+
+public class LayerFilterSettings
+{
+    public int Brightness { get; set; } = 100;
+    public int Contrast { get; set; } = 100;
+    public int BlurRadius { get; set; }
+
+    public LayerFilterSettings Clone()
+    {
+        return new LayerFilterSettings
+        {
+            Brightness = Brightness,
+            Contrast = Contrast,
+            BlurRadius = BlurRadius
         };
     }
 }
@@ -67,4 +86,24 @@ public class ToolSettings
     public string BackgroundColorHex { get; set; } = "#FFFFFF";
     public int BrushSize { get; set; } = 5;
     public string BrushType { get; set; } = "Round";
+
+    public ToolSettings Clone()
+    {
+        return new ToolSettings
+        {
+            ForegroundColorHex = ForegroundColorHex,
+            BackgroundColorHex = BackgroundColorHex,
+            BrushSize = BrushSize,
+            BrushType = BrushType
+        };
+    }
+}
+
+public class ImportedImageData
+{
+    public string DataUrl { get; set; } = string.Empty;
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string ContentType { get; set; } = "image/png";
 }

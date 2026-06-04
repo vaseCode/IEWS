@@ -18,5 +18,7 @@ builder.Services.AddScoped<LayerService>();
 builder.Services.AddScoped<ToolManager>();
 builder.Services.AddScoped<CanvasManager>();
 builder.Services.AddScoped<ImageImportService>();
+builder.Services.AddScoped<ProjectStorageService>();
+builder.Services.AddScoped<SettingsService>();
 
 await builder.Build().RunAsync();

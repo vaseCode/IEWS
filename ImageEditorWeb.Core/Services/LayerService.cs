@@ -33,12 +33,27 @@ public class LayerService
         return _layers.FirstOrDefault(layer => layer.Id == ActiveLayerId);
     }
 
+    public void SetCanvasSize(int width, int height)
+    {
+        width = Math.Clamp(width, 1, 4096);
+        height = Math.Clamp(height, 1, 4096);
+
+        if (CanvasWidth == width && CanvasHeight == height)
+        {
+            return;
+        }
+
+        SaveState();
+        CanvasWidth = width;
+        CanvasHeight = height;
+    }
+
     public void AddLayer(CanvasLayer layer, bool setActive = true)
     {
         SaveState();
 
         layer.ZIndex = _layers.Count == 0 ? 0 : _layers.Max(existing => existing.ZIndex) + 1;
-        _layers.Add(layer);
+        _layers.Add(layer.Clone());
         NormalizeZIndexes();
 
         if (setActive)
@@ -110,6 +125,32 @@ public class LayerService
         layer.Opacity = Math.Clamp(opacity, 0d, 1d);
     }
 
+    public void SetLayerFilters(Guid layerId, int brightness, int contrast, int blurRadius)
+    {
+        var layer = _layers.FirstOrDefault(item => item.Id == layerId);
+        if (layer == null)
+        {
+            return;
+        }
+
+        SaveState();
+        layer.Filters.Brightness = Math.Clamp(brightness, 0, 300);
+        layer.Filters.Contrast = Math.Clamp(contrast, 0, 300);
+        layer.Filters.BlurRadius = Math.Clamp(blurRadius, 0, 20);
+    }
+
+    public void ResetLayerFilters(Guid layerId)
+    {
+        var layer = _layers.FirstOrDefault(item => item.Id == layerId);
+        if (layer == null)
+        {
+            return;
+        }
+
+        SaveState();
+        layer.Filters = new LayerFilterSettings();
+    }
+
     public void MoveLayerUp(Guid layerId)
     {
         var ordered = _layers.OrderBy(layer => layer.ZIndex).ToList();
@@ -165,6 +206,41 @@ public class LayerService
     public void SaveCheckpoint()
     {
         SaveState();
+    }
+
+    public EditorProject CreateProjectSnapshot(string projectName, ToolSettings toolSettings, string currentTool, EditorViewState viewState, Guid? projectId = null, DateTime? createdAtUtc = null)
+    {
+        return new EditorProject
+        {
+            Id = projectId ?? Guid.NewGuid(),
+            Name = projectName,
+            CreatedAtUtc = createdAtUtc ?? DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow,
+            Layers = _layers.Select(layer => layer.Clone()).ToList(),
+            ActiveLayerId = ActiveLayerId,
+            CanvasWidth = CanvasWidth,
+            CanvasHeight = CanvasHeight,
+            CurrentTool = currentTool,
+            ToolSettings = toolSettings.Clone(),
+            ViewState = viewState.Clone()
+        };
+    }
+
+    public void LoadProject(EditorProject project)
+    {
+        _layers = project.Layers.Select(layer => layer.Clone()).ToList();
+        ActiveLayerId = project.ActiveLayerId;
+        CanvasWidth = Math.Clamp(project.CanvasWidth, 1, 4096);
+        CanvasHeight = Math.Clamp(project.CanvasHeight, 1, 4096);
+        EnsureBaseLayer();
+        NormalizeZIndexes();
+        ClearHistory();
+    }
+
+    public void ClearHistory()
+    {
+        _history.Clear();
+        _redoStack.Clear();
     }
 
     public bool CanUndo() => _history.Count > 0;

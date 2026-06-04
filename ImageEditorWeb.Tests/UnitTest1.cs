@@ -82,4 +82,44 @@ public class UnitTest1
 
         Assert.Empty(service.GetActiveLayer()!.Strokes);
     }
+
+    [Fact]
+    public void SetCanvasSize_UpdatesCanvasDimensions()
+    {
+        var service = new LayerService();
+
+        service.SetCanvasSize(1280, 720);
+
+        Assert.Equal(1280, service.CanvasWidth);
+        Assert.Equal(720, service.CanvasHeight);
+    }
+
+    [Fact]
+    public void SetLayerFilters_UpdatesFilterValues()
+    {
+        var service = new LayerService();
+        var layerId = service.ActiveLayerId!.Value;
+
+        service.SetLayerFilters(layerId, 120, 90, 4);
+
+        var activeLayer = service.GetActiveLayer()!;
+        Assert.Equal(120, activeLayer.Filters.Brightness);
+        Assert.Equal(90, activeLayer.Filters.Contrast);
+        Assert.Equal(4, activeLayer.Filters.BlurRadius);
+    }
+
+    [Fact]
+    public void ResetLayerFilters_ReturnsDefaultValues()
+    {
+        var service = new LayerService();
+        var layerId = service.ActiveLayerId!.Value;
+        service.SetLayerFilters(layerId, 120, 90, 4);
+
+        service.ResetLayerFilters(layerId);
+
+        var activeLayer = service.GetActiveLayer()!;
+        Assert.Equal(100, activeLayer.Filters.Brightness);
+        Assert.Equal(100, activeLayer.Filters.Contrast);
+        Assert.Equal(0, activeLayer.Filters.BlurRadius);
+    }
 }

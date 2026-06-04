@@ -20,9 +20,19 @@ public class CanvasManager
     public async Task InitializeAsync(ElementReference canvas, int width = 800, int height = 600)
     {
         _canvas = canvas;
+        _initialized = true;
+        await ResizeAsync(width, height);
+    }
+
+    public async Task ResizeAsync(int width, int height)
+    {
         _width = width;
         _height = height;
-        _initialized = true;
+
+        if (!_initialized)
+        {
+            return;
+        }
 
         await _jsRuntime.InvokeVoidAsync("iewCanvas.init", _canvas, _width, _height, "#ffffff");
     }
@@ -49,6 +59,12 @@ public class CanvasManager
                 height = _height,
                 opacity = layer.Opacity,
                 imageDataUrl = layer.ImageDataUrl,
+                filters = new
+                {
+                    brightness = layer.Filters.Brightness,
+                    contrast = layer.Filters.Contrast,
+                    blurRadius = layer.Filters.BlurRadius
+                },
                 strokes = layer.Strokes.Select(stroke => new
                 {
                     x1 = stroke.X1,
@@ -75,14 +91,22 @@ public class CanvasManager
         await _jsRuntime.InvokeVoidAsync("iewCanvas.clear", _canvas, _width, _height, "#ffffff");
     }
 
-    public async Task DownloadPngAsync(string fileName)
+    public async Task DownloadImageAsync(string format, string fileName, double quality = 0.92)
     {
         if (!_initialized)
         {
             return;
         }
 
-        var dataUrl = await _jsRuntime.InvokeAsync<string>("iewCanvas.getDataUrl", _canvas, "image/png", 1.0);
+        var mimeType = format.ToLowerInvariant() switch
+        {
+            "png" => "image/png",
+            "jpg" or "jpeg" => "image/jpeg",
+            "webp" => "image/webp",
+            _ => "image/png"
+        };
+
+        var dataUrl = await _jsRuntime.InvokeAsync<string>("iewCanvas.getDataUrl", _canvas, mimeType, quality);
         await _jsRuntime.InvokeVoidAsync("iewCanvas.download", dataUrl, fileName);
     }
 }

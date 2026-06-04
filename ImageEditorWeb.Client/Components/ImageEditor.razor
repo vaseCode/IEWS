@@ -2,130 +2,432 @@
 @inject ToolManager ToolManager
 @inject CanvasManager CanvasManager
 @inject ImageImportService ImageImportService
+@inject ProjectStorageService ProjectStorageService
+@inject SettingsService SettingsService
+@inject IJSRuntime JSRuntime
 
-<div class="image-editor">
-    <div class="editor-toolbar">
-        <div class="toolbar-group">
-            <label class="btn btn-primary btn-sm mb-0 upload-button">
-                Загрузить
-                <InputFile OnChange="OnInputFileChange" accept="image/png,image/jpeg,image/webp" class="d-none" />
-            </label>
-            <button class="btn btn-primary btn-sm" @onclick="AddNewLayer">Новый слой</button>
-            <button class="btn btn-success btn-sm" @onclick="SaveAsPng">Сохранить PNG</button>
-        </div>
+<div class="image-editor-shell"
+     @ref="editorHost"
+     tabindex="0"
+     @onkeydown="HandleKeyDown">
+    <InputFile id="import-file-input"
+               OnChange="OnInputFileChange"
+               accept="image/png,image/jpeg,image/webp"
+               class="d-none" />
 
-        <div class="toolbar-group">
-            @foreach (var tool in ToolManager.GetAllTools())
+    <div class="editor-menu-bar">
+        <div class="menu-root">
+            <button class="menu-button @(_openMenu == "file" ? "open" : string.Empty)" @onclick="ToggleFileMenu">File</button>
+            @if (_openMenu == "file")
             {
-                <button class="tool-btn @(ToolManager.GetCurrentTool()?.Name == tool.Name ? "active" : string.Empty)"
-                        @onclick="() => SelectTool(tool.Name)"
-                        title="@tool.Name">
-                    <span class="tool-name">@tool.Name</span>
-                </button>
-            }
-        </div>
-    </div>
-
-    <div class="editor-container">
-        <aside class="layers-panel">
-            <h3>Слои</h3>
-
-            @foreach (var layer in LayerService.Layers.OrderByDescending(layer => layer.ZIndex))
-            {
-                <div class="layer-item @(LayerService.ActiveLayerId == layer.Id ? "active-layer" : string.Empty)"
-                     @onclick="() => SelectLayer(layer.Id)">
-                    <div class="layer-item-top">
-                        <input type="checkbox"
-                               checked="@layer.IsVisible"
-                               @onclick:stopPropagation="true"
-                               @onchange="@(async args => await ToggleLayerVisibility(layer.Id, args))" />
-                        <input class="layer-name"
-                               value="@layer.Name"
-                               @onclick:stopPropagation="true"
-                               @onchange="@(async args => await RenameLayer(layer.Id, args.Value?.ToString() ?? layer.Name))" />
-                    </div>
-
-                    <div class="layer-actions">
-                        <button class="btn btn-outline-secondary btn-sm" @onclick:stopPropagation="true" @onclick="() => MoveLayerUp(layer.Id)">↑</button>
-                        <button class="btn btn-outline-secondary btn-sm" @onclick:stopPropagation="true" @onclick="() => MoveLayerDown(layer.Id)">↓</button>
-                        <button class="btn btn-outline-danger btn-sm" @onclick:stopPropagation="true" @onclick="() => RemoveLayer(layer.Id)">Удалить</button>
-                    </div>
+                <div class="menu-dropdown">
+                    <button class="menu-item" @onclick="OpenProjectsDialogAsync">Открыть</button>
+                    <button class="menu-item" @onclick="OpenImportDialogAsync">Импорт</button>
+                    <button class="menu-item" @onclick="ExportDefaultAsync">Экспорт</button>
+                    <div class="menu-separator"></div>
+                    <button class="menu-item" @onclick="SaveProjectAsync">Сохранить</button>
+                    <button class="menu-item" @onclick="SaveProjectAsAsync">Сохранить как</button>
+                    <button class="menu-item" @onclick="SaveProjectCopyAsync">Сохранить копию</button>
                 </div>
             }
-        </aside>
+        </div>
 
-        <section class="canvas-container">
-            <canvas @ref="canvasReference"
-                    class="editor-canvas"
-                    width="@LayerService.CanvasWidth"
-                    height="@LayerService.CanvasHeight"
-                    @onmousedown="OnMouseDown"
-                    @onmousemove="OnMouseMove"
-                    @onmouseup="OnMouseUp"
-                    @onmouseleave="OnMouseLeave"></canvas>
-        </section>
-
-        <aside class="properties-panel">
-            <h3>Свойства</h3>
-
-            <div class="property-block">
-                <div class="property-label">Активный слой</div>
-                <div class="property-value">@LayerService.GetActiveLayer()?.Name</div>
-            </div>
-
-            <div class="property-block">
-                <label class="form-label">Размер инструмента: @ToolSettings.BrushSize</label>
-                <input type="range" class="form-range" min="1" max="64"
-                       @bind="ToolSettings.BrushSize"
-                       @bind:event="oninput" />
-            </div>
-
-            <div class="property-block">
-                <label class="form-label">Основной цвет</label>
-                <input type="color" class="form-control form-control-color"
-                       @bind="ToolSettings.ForegroundColorHex"
-                       @bind:event="oninput" />
-            </div>
-
-            @if (LayerService.GetActiveLayer() is CanvasLayer activeLayer)
+        <div class="menu-root">
+            <button class="menu-button @(_openMenu == "edit" ? "open" : string.Empty)" @onclick="ToggleEditMenu">Edit</button>
+            @if (_openMenu == "edit")
             {
+                <div class="menu-dropdown">
+                    <button class="menu-item" @onclick="Undo" disabled="@(!LayerService.CanUndo())">Отменить</button>
+                    <button class="menu-item" @onclick="Redo" disabled="@(!LayerService.CanRedo())">Повторить</button>
+                    <div class="menu-separator"></div>
+                    <button class="menu-item" @onclick="OpenSettingsDialog">Настройки</button>
+                </div>
+            }
+        </div>
+
+    </div>
+
+    <div class="image-editor">
+        <div class="editor-toolbar">
+
+            @* <div class="toolbar-group">
+                <button class="btn btn-success btn-sm" @onclick="ExportDefaultAsync">Экспорт (@_settings.DefaultExportFormat.ToUpperInvariant())</button>
+                <div class="btn-group" role="group" aria-label="Экспорт форматов">
+                    <button class="btn btn-outline-light btn-sm" @onclick="SaveAsPng">PNG</button>
+                    <button class="btn btn-outline-light btn-sm" @onclick="SaveAsJpeg">JPG</button>
+                    <button class="btn btn-outline-light btn-sm" @onclick="SaveAsWebP">WEBP</button>
+                </div>
+            </div> *@
+
+            <div class="toolbar-group">
+                @foreach (var tool in ToolManager.GetAllTools())
+                {
+                    <button class="tool-btn @(ToolManager.GetCurrentTool()?.Name == tool.Name ? "active" : string.Empty)"
+                            @onclick="@(() => SelectTool(tool.Name))"
+                            title="@tool.Name">
+                        <span>@tool.Icon</span>
+                        <span class="tool-name">@tool.Name</span>
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="editor-container">
+            <aside class="layers-panel">
+                <h3>Слои</h3>
+
+                <button class="btn btn-primary btn-sm w-100 mb-3" @onclick="AddNewLayer">Новый слой</button>
+
+                @foreach (var layer in LayerService.Layers.OrderByDescending(layer => layer.ZIndex))
+                {
+                    <div class="layer-item @(LayerService.ActiveLayerId == layer.Id ? "active-layer" : string.Empty)"
+                         @onclick="@(() => SelectLayer(layer.Id))">
+                        <div class="layer-item-top">
+                            <input type="checkbox"
+                                   checked="@layer.IsVisible"
+                                   @onclick:stopPropagation="true"
+                                   @onchange="@(async args => await ToggleLayerVisibility(layer.Id, args))" />
+                            <input class="layer-name"
+                                   value="@layer.Name"
+                                   @onclick:stopPropagation="true"
+                                   @onchange="@(async args => await RenameLayer(layer.Id, args.Value?.ToString() ?? layer.Name))" />
+                        </div>
+
+                        <div class="layer-actions">
+                            <button class="btn btn-outline-secondary btn-sm" @onclick:stopPropagation="true" @onclick="@(() => MoveLayerUp(layer.Id))">↑</button>
+                            <button class="btn btn-outline-secondary btn-sm" @onclick:stopPropagation="true" @onclick="@(() => MoveLayerDown(layer.Id))">↓</button>
+                            <button class="btn btn-outline-danger btn-sm" @onclick:stopPropagation="true" @onclick="@(() => RemoveLayer(layer.Id))">Удалить</button>
+                        </div>
+                    </div>
+                }
+            </aside>
+
+            <section class="@CanvasContainerCssClass">
+                <div class="canvas-viewport-toolbar">
+                    <span class="zoom-indicator">@((ViewState.Zoom * 100).ToString("0", System.Globalization.CultureInfo.InvariantCulture))%</span>
+                </div>
+
+                <div class="@ViewportCssClass"
+                     @onmousedown="OnViewportMouseDown"
+                     @onmousemove="OnViewportMouseMove"
+                     @onmouseup="OnViewportMouseUp"
+                     @onmouseleave="OnViewportMouseLeave"
+                     @onwheel="OnViewportWheel"
+                     @onwheel:preventDefault="true">
+                    <div class="canvas-transform" style="@CanvasTransformStyle">
+                        <canvas @ref="canvasReference"
+                                class="editor-canvas"
+                                width="@LayerService.CanvasWidth"
+                                height="@LayerService.CanvasHeight"
+                                @onmousedown="OnMouseDown"
+                                @onmousedown:stopPropagation="true"
+                                @onmousemove="OnMouseMove"
+                                @onmouseup="OnMouseUp"
+                                @onmouseleave="OnMouseLeave"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <aside class="properties-panel">
+                <h3>Свойства</h3>
+
                 <div class="property-block">
-                    <label class="form-label">Прозрачность слоя: @activeLayer.Opacity.ToString("0.00")</label>
-                    <input type="range" class="form-range" min="0" max="1" step="0.05"
-                           value="@activeLayer.Opacity"
-                           @onchange="@(async args => await ChangeOpacity(activeLayer.Id, args.Value?.ToString()))" />
+                    <div class="property-label">Активный слой</div>
+                    <div class="property-value">@LayerService.GetActiveLayer()?.Name</div>
                 </div>
-            }
 
-            <div class="history-controls">
-                <button class="btn btn-secondary me-2"
-                        @onclick="Undo"
-                        disabled="@(!LayerService.CanUndo())">
-                    Отменить
-                </button>
-                <button class="btn btn-secondary"
-                        @onclick="Redo"
-                        disabled="@(!LayerService.CanRedo())">
-                    Повторить
-                </button>
-            </div>
-        </aside>
+                <div class="property-block">
+                    <div class="property-label">Размер холста</div>
+                    <div class="property-value">@LayerService.CanvasWidth × @LayerService.CanvasHeight</div>
+                </div>
+
+                <div class="property-block">
+                    <label class="form-label">Размер инструмента: @ToolSettings.BrushSize</label>
+                    <input type="range" class="form-range" min="1" max="64"
+                           @bind="ToolSettings.BrushSize"
+                           @bind:event="oninput" />
+                </div>
+
+                <div class="property-block">
+                    <label class="form-label">Основной цвет</label>
+                    <input type="color" class="form-control form-control-color"
+                           @bind="ToolSettings.ForegroundColorHex"
+                           @bind:event="oninput" />
+                </div>
+
+                @if (LayerService.GetActiveLayer() is CanvasLayer activeLayer)
+                {
+                    <div class="property-block">
+                        <label class="form-label">Прозрачность слоя: @activeLayer.Opacity.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)</label>
+                        <input type="range" class="form-range" min="0" max="1" step="0.05"
+                               value="@activeLayer.Opacity.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                               @onchange="@(async args => await ChangeOpacity(activeLayer.Id, args.Value?.ToString()))" />
+                    </div>
+
+                    <div class="property-block">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="property-label mb-0">Фильтры слоя</span>
+                            <button class="btn btn-outline-secondary btn-sm" @onclick="@(() => ResetFilters(activeLayer.Id))">Сбросить</button>
+                        </div>
+
+                        <label class="form-label">Яркость: @activeLayer.Filters.Brightness%</label>
+                        <input type="range" class="form-range" min="0" max="200" step="5"
+                               value="@activeLayer.Filters.Brightness"
+                               @onchange="@(async args => await ChangeFilters(activeLayer.Id, brightnessValue: args.Value?.ToString()))" />
+
+                        <label class="form-label">Контраст: @activeLayer.Filters.Contrast%</label>
+                        <input type="range" class="form-range" min="0" max="200" step="5"
+                               value="@activeLayer.Filters.Contrast"
+                               @onchange="@(async args => await ChangeFilters(activeLayer.Id, contrastValue: args.Value?.ToString()))" />
+
+                        <label class="form-label">Размытие: @activeLayer.Filters.BlurRadius px</label>
+                        <input type="range" class="form-range" min="0" max="12" step="1"
+                               value="@activeLayer.Filters.BlurRadius"
+                               @onchange="@(async args => await ChangeFilters(activeLayer.Id, blurValue: args.Value?.ToString()))" />
+                    </div>
+                }
+
+                <div class="history-controls">
+                    <button class="btn btn-secondary me-2"
+                            @onclick="Undo"
+                            disabled="@(!LayerService.CanUndo())">
+                        Отменить
+                    </button>
+                    <button class="btn btn-secondary"
+                            @onclick="Redo"
+                            disabled="@(!LayerService.CanRedo())">
+                        Повторить
+                    </button>
+                </div>
+            </aside>
+        </div>
     </div>
+
+    @if (_isOpenProjectsDialogOpen)
+    {
+        <div class="editor-modal-backdrop" @onclick="CloseAllDialogs">
+            <div class="editor-modal" @onclick:stopPropagation="true">
+                <div class="editor-modal-header">
+                    <h4>Сохранённые проекты</h4>
+                    <button class="btn-close" @onclick="CloseAllDialogs"></button>
+                </div>
+                <div class="editor-modal-body">
+                    @if (_savedProjects.Count == 0)
+                    {
+                        <p class="text-muted mb-0">Пока нет сохранённых проектов.</p>
+                    }
+                    else
+                    {
+                        @foreach (var project in _savedProjects)
+                        {
+                            <div class="saved-project-item">
+                                <div>
+                                    <div class="fw-semibold">@project.Name</div>
+                                    <div class="saved-project-meta">Обновлён: @project.UpdatedAtUtc.ToLocalTime().ToString("g")</div>
+                                </div>
+                                <div class="saved-project-actions">
+                                    <button class="btn btn-primary btn-sm" @onclick="@(() => OpenSavedProjectAsync(project.Id))">Открыть</button>
+                                    <button class="btn btn-outline-danger btn-sm" @onclick="@(() => DeleteSavedProjectAsync(project.Id))">Удалить</button>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (_isSaveDialogOpen)
+    {
+        <div class="editor-modal-backdrop" @onclick="CloseAllDialogs">
+            <div class="editor-modal" @onclick:stopPropagation="true">
+                <div class="editor-modal-header">
+                    <h4>@(_isSaveCopyMode ? "Сохранить копию" : "Сохранить проект")</h4>
+                    <button class="btn-close" @onclick="CloseAllDialogs"></button>
+                </div>
+                <div class="editor-modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Имя проекта</label>
+                        <input class="form-control" @bind="_pendingProjectName" />
+                    </div>
+                    <div class="d-flex justify-content-end gap-2">
+                        <button class="btn btn-secondary" @onclick="CloseAllDialogs">Отмена</button>
+                        <button class="btn btn-primary" @onclick="ConfirmSaveProjectAsync">Сохранить</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (_isSettingsDialogOpen)
+    {
+        <div class="editor-modal-backdrop" @onclick="CloseAllDialogs">
+            <div class="editor-modal settings-modal" @onclick:stopPropagation="true">
+                <div class="editor-modal-header">
+                    <h4>Настройки</h4>
+                    <button class="btn-close" @onclick="CloseAllDialogs"></button>
+                </div>
+                <div class="editor-modal-body">
+                    <div class="settings-tabs">
+                        <button class="settings-tab @(_settingsTab == "general" ? "active" : string.Empty)" @onclick="ShowGeneralSettings">Основные</button>
+                        <button class="settings-tab @(_settingsTab == "language" ? "active" : string.Empty)" @onclick="ShowLanguageSettings">Язык</button>
+                        <button class="settings-tab @(_settingsTab == "hotkeys" ? "active" : string.Empty)" @onclick="ShowHotkeysSettings">Горячие клавиши</button>
+                    </div>
+
+                    @if (_settingsTab == "general")
+                    {
+                        <div class="settings-section">
+                            <label class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" @bind="_settings.AutoSaveProjects" />
+                                <span class="form-check-label">Автосохранение текущего проекта</span>
+                            </label>
+
+                            <label class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" @bind="_settings.ShowCheckerboardBackground" />
+                                <span class="form-check-label">Показывать шахматный фон холста</span>
+                            </label>
+
+                            <div class="mb-3">
+                                <label class="form-label">Шаг масштабирования</label>
+                                <input class="form-control" type="number" min="0.05" max="1" step="0.05" @bind="_settings.ZoomStep" />
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Формат экспорта по умолчанию</label>
+                                <select class="form-select" @bind="_settings.DefaultExportFormat">
+                                    <option value="png">PNG</option>
+                                    <option value="jpg">JPG</option>
+                                    <option value="webp">WEBP</option>
+                                </select>
+                            </div>
+                        </div>
+                    }
+                    else if (_settingsTab == "language")
+                    {
+                        <div class="settings-section">
+                            <label class="form-label">Язык интерфейса</label>
+                            <select class="form-select" @bind="_settings.Language">
+                                <option value="ru-RU">Русский</option>
+                                <option value="en-US">English</option>
+                            </select>
+                            <div class="form-text mt-2">Язык сохраняется в локальные настройки браузера.</div>
+                        </div>
+                    }
+                    else if (_settingsTab == "hotkeys")
+                    {
+                        <div class="settings-section hotkeys-grid">
+                            <div>
+                                <label class="form-label">Открыть проекты</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.OpenProjects" />
+                            </div>
+                            <div>
+                                <label class="form-label">Сохранить</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.Save" />
+                            </div>
+                            <div>
+                                <label class="form-label">Сохранить как</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.SaveAs" />
+                            </div>
+                            <div>
+                                <label class="form-label">Сохранить копию</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.SaveCopy" />
+                            </div>
+                            <div>
+                                <label class="form-label">Undo</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.Undo" />
+                            </div>
+                            <div>
+                                <label class="form-label">Redo</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.Redo" />
+                            </div>
+                            <div>
+                                <label class="form-label">Настройки</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.Settings" />
+                            </div>
+                            <div>
+                                <label class="form-label">Zoom in</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.ZoomIn" />
+                            </div>
+                            <div>
+                                <label class="form-label">Zoom out</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.ZoomOut" />
+                            </div>
+                            <div>
+                                <label class="form-label">Влево</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.PanLeft" />
+                            </div>
+                            <div>
+                                <label class="form-label">Вправо</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.PanRight" />
+                            </div>
+                            <div>
+                                <label class="form-label">Вверх</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.PanUp" />
+                            </div>
+                            <div>
+                                <label class="form-label">Вниз</label>
+                                <input class="form-control" @bind="_settings.Hotkeys.PanDown" />
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" @onclick="ResetHotkeys">Сбросить по умолчанию</button>
+                            <div class="form-text mb-0">Пример формата: Ctrl+S, Ctrl+Shift+S, ArrowLeft</div>
+                        </div>
+                    }
+
+                    <div class="d-flex justify-content-end gap-2 mt-4">
+                        <button class="btn btn-secondary" @onclick="CloseAllDialogs">Отмена</button>
+                        <button class="btn btn-primary" @onclick="SaveSettingsAsync">Сохранить настройки</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
+    private const int PanStep = 40;
+
     private ElementReference canvasReference;
-    private readonly ToolSettings ToolSettings = new();
+    private ElementReference editorHost;
+    private ToolSettings ToolSettings { get; set; } = new();
+    private EditorViewState ViewState { get; set; } = new();
+    private EditorSettings _settings = new();
+    private List<EditorProject> _savedProjects = new();
     private bool _canvasReady;
     private bool _isMouseDown;
+    private bool _isPanningCanvas;
+    private double _panStartClientX;
+    private double _panStartClientY;
+    private double _panOriginX;
+    private double _panOriginY;
+    private string? _openMenu;
+    private bool _isOpenProjectsDialogOpen;
+    private bool _isSaveDialogOpen;
+    private bool _isSaveCopyMode;
+    private bool _isSettingsDialogOpen;
+    private string _settingsTab = "general";
+    private string _pendingProjectName = "";
+    private Guid? _currentProjectId;
+    private DateTime? _currentProjectCreatedAtUtc;
+    private string _currentProjectName = "Несохранённый проект";
+
+    private string CurrentProjectLabel => _currentProjectId.HasValue ? _currentProjectName : $"{_currentProjectName}*";
+    private string CanvasContainerCssClass => _settings.ShowCheckerboardBackground ? "canvas-container checkerboard-bg" : "canvas-container plain-bg";
+    private string ViewportCssClass => _isPanningCanvas ? "canvas-viewport is-panning" : "canvas-viewport";
+    private string CanvasTransformStyle => $"transform: translate({ViewState.PanX.ToString(System.Globalization.CultureInfo.InvariantCulture)}px, {ViewState.PanY.ToString(System.Globalization.CultureInfo.InvariantCulture)}px) scale({ViewState.Zoom.ToString(System.Globalization.CultureInfo.InvariantCulture)}); transform-origin: top left;";
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
+            _settings = await SettingsService.LoadAsync();
+            _savedProjects = await ProjectStorageService.GetProjectsAsync();
+            await SettingsService.ApplyAsync(_settings);
             await CanvasManager.InitializeAsync(canvasReference, LayerService.CanvasWidth, LayerService.CanvasHeight);
             _canvasReady = true;
             await RefreshCanvasAsync();
+            await JSRuntime.InvokeVoidAsync("iewApp.focusElement", editorHost);
         }
     }
 
@@ -140,39 +442,60 @@
         await InvokeAsync(StateHasChanged);
     }
 
+    private void ToggleFileMenu()
+    {
+        _openMenu = _openMenu == "file" ? null : "file";
+    }
+
+    private void ToggleEditMenu()
+    {
+        _openMenu = _openMenu == "edit" ? null : "edit";
+    }
+
+    private void CloseMenu()
+    {
+        _openMenu = null;
+    }
+
     private async Task SelectTool(string toolName)
     {
         ToolManager.SetCurrentTool(toolName);
+        await AutoSaveCurrentProjectAsync();
         await RefreshCanvasAsync();
     }
 
     private async Task AddNewLayer()
     {
         LayerService.AddLayer(LayerService.CreateEmptyLayer());
+        await AutoSaveCurrentProjectAsync();
         await RefreshCanvasAsync();
     }
 
     private async Task RemoveLayer(Guid layerId)
     {
         LayerService.RemoveLayer(layerId);
+        await AutoSaveCurrentProjectAsync();
         await RefreshCanvasAsync();
     }
 
     private async Task MoveLayerUp(Guid layerId)
     {
         LayerService.MoveLayerUp(layerId);
+        await AutoSaveCurrentProjectAsync();
         await RefreshCanvasAsync();
     }
 
     private async Task MoveLayerDown(Guid layerId)
     {
         LayerService.MoveLayerDown(layerId);
+        await AutoSaveCurrentProjectAsync();
         await RefreshCanvasAsync();
     }
 
     private async Task RenameLayer(Guid layerId, string name)
     {
         LayerService.RenameLayer(layerId, name);
+        await AutoSaveCurrentProjectAsync();
         await RefreshCanvasAsync();
     }
 
@@ -184,13 +507,16 @@
             string text when bool.TryParse(text, out var parsed) => parsed,
             _ => false
         };
+
         LayerService.ToggleLayerVisibility(layerId, isVisible);
+        await AutoSaveCurrentProjectAsync();
         await RefreshCanvasAsync();
     }
 
     private async Task SelectLayer(Guid layerId)
     {
         LayerService.SetActiveLayer(layerId);
+        await AutoSaveCurrentProjectAsync();
         await RefreshCanvasAsync();
     }
 
@@ -199,24 +525,79 @@
         if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var opacity))
         {
             LayerService.SetLayerOpacity(layerId, opacity);
+            await AutoSaveCurrentProjectAsync();
             await RefreshCanvasAsync();
         }
     }
 
+    private async Task ChangeFilters(Guid layerId, string? brightnessValue = null, string? contrastValue = null, string? blurValue = null)
+    {
+        var layer = LayerService.Layers.FirstOrDefault(item => item.Id == layerId);
+        if (layer == null)
+        {
+            return;
+        }
+
+        var brightness = layer.Filters.Brightness;
+        var contrast = layer.Filters.Contrast;
+        var blur = layer.Filters.BlurRadius;
+
+        if (int.TryParse(brightnessValue, out var parsedBrightness))
+        {
+            brightness = parsedBrightness;
+        }
+
+        if (int.TryParse(contrastValue, out var parsedContrast))
+        {
+            contrast = parsedContrast;
+        }
+
+        if (int.TryParse(blurValue, out var parsedBlur))
+        {
+            blur = parsedBlur;
+        }
+
+        LayerService.SetLayerFilters(layerId, brightness, contrast, blur);
+        await AutoSaveCurrentProjectAsync();
+        await RefreshCanvasAsync();
+    }
+
+    private async Task ResetFilters(Guid layerId)
+    {
+        LayerService.ResetLayerFilters(layerId);
+        await AutoSaveCurrentProjectAsync();
+        await RefreshCanvasAsync();
+    }
+
+    private async Task OpenImportDialogAsync()
+    {
+        CloseMenu();
+        await JSRuntime.InvokeVoidAsync("iewApp.clickElementById", "import-file-input");
+    }
+
     private async Task OnInputFileChange(InputFileChangeEventArgs args)
     {
-        var file = args.File;
-        var dataUrl = await ImageImportService.ReadAsDataUrlAsync(file);
-        var layer = LayerService.CreateEmptyLayer(Path.GetFileNameWithoutExtension(file.Name));
-        layer.ImageDataUrl = dataUrl;
+        var importedImage = await ImageImportService.ReadImageAsync(args.File);
+        LayerService.SetCanvasSize(importedImage.Width, importedImage.Height);
+        await CanvasManager.ResizeAsync(LayerService.CanvasWidth, LayerService.CanvasHeight);
+
+        var layer = LayerService.CreateEmptyLayer(Path.GetFileNameWithoutExtension(importedImage.FileName));
+        layer.ImageDataUrl = importedImage.DataUrl;
         LayerService.AddLayer(layer);
+        ResetViewState();
+        await AutoSaveCurrentProjectAsync();
         await RefreshCanvasAsync();
     }
 
     private async Task OnMouseDown(MouseEventArgs args)
     {
+        if (args.Button != 0)
+        {
+            return;
+        }
+
         _isMouseDown = true;
-        var point = new EditorPoint((int)args.OffsetX, (int)args.OffsetY);
+        var point = ToEditorPoint(args);
         var tool = ToolManager.GetCurrentTool();
         if (tool != null)
         {
@@ -232,7 +613,7 @@
             return;
         }
 
-        var point = new EditorPoint((int)args.OffsetX, (int)args.OffsetY);
+        var point = ToEditorPoint(args);
         var tool = ToolManager.GetCurrentTool();
         if (tool != null)
         {
@@ -249,11 +630,12 @@
         }
 
         _isMouseDown = false;
-        var point = new EditorPoint((int)args.OffsetX, (int)args.OffsetY);
+        var point = ToEditorPoint(args);
         var tool = ToolManager.GetCurrentTool();
         if (tool != null)
         {
             await tool.OnMouseUp(point, ToolSettings, LayerService);
+            await AutoSaveCurrentProjectAsync();
             await RefreshCanvasAsync();
         }
     }
@@ -266,20 +648,465 @@
         }
     }
 
+    private Task OnViewportMouseDown(MouseEventArgs args)
+    {
+        if (args.Button != 0 || _isMouseDown)
+        {
+            return Task.CompletedTask;
+        }
+
+        _isPanningCanvas = true;
+        _panStartClientX = args.ClientX;
+        _panStartClientY = args.ClientY;
+        _panOriginX = ViewState.PanX;
+        _panOriginY = ViewState.PanY;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private Task OnViewportMouseMove(MouseEventArgs args)
+    {
+        if (!_isPanningCanvas)
+        {
+            return Task.CompletedTask;
+        }
+
+        ViewState.PanX = _panOriginX + (args.ClientX - _panStartClientX);
+        ViewState.PanY = _panOriginY + (args.ClientY - _panStartClientY);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnViewportMouseUp(MouseEventArgs args)
+    {
+        if (!_isPanningCanvas)
+        {
+            return;
+        }
+
+        _isPanningCanvas = false;
+        await AutoSaveCurrentProjectAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnViewportMouseLeave(MouseEventArgs args)
+    {
+        if (!_isPanningCanvas)
+        {
+            return;
+        }
+
+        _isPanningCanvas = false;
+        await AutoSaveCurrentProjectAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private Task OnViewportWheel(WheelEventArgs args)
+    {
+        ChangeZoom(args.DeltaY < 0 ? _settings.ZoomStep : -_settings.ZoomStep);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private EditorPoint ToEditorPoint(MouseEventArgs args)
+    {
+        var zoom = Math.Max(ViewState.Zoom, 0.1);
+        return new EditorPoint((int)(args.OffsetX / zoom), (int)(args.OffsetY / zoom));
+    }
+
+    private void PanLeft() => PanCanvas(PanStep, 0);
+    private void PanRight() => PanCanvas(-PanStep, 0);
+    private void PanUp() => PanCanvas(0, PanStep);
+    private void PanDown() => PanCanvas(0, -PanStep);
+
+    private void PanCanvas(double deltaX, double deltaY)
+    {
+        ViewState.PanX += deltaX;
+        ViewState.PanY += deltaY;
+        _ = AutoSaveCurrentProjectAsync();
+    }
+
+    private void ZoomIn() => ChangeZoom(_settings.ZoomStep);
+    private void ZoomOut() => ChangeZoom(-_settings.ZoomStep);
+
+    private void ChangeZoom(double delta)
+    {
+        var step = Math.Clamp(delta, -1, 1);
+        ViewState.Zoom = Math.Clamp(ViewState.Zoom + step, 0.2, 5);
+        _ = AutoSaveCurrentProjectAsync();
+    }
+
+    private void ResetView()
+    {
+        ResetViewState();
+        _ = AutoSaveCurrentProjectAsync();
+    }
+
+    private void ResetViewState()
+    {
+        ViewState = new EditorViewState();
+    }
+
     private async Task Undo()
     {
         LayerService.Undo();
+        await CanvasManager.ResizeAsync(LayerService.CanvasWidth, LayerService.CanvasHeight);
+        await AutoSaveCurrentProjectAsync();
         await RefreshCanvasAsync();
     }
 
     private async Task Redo()
     {
         LayerService.Redo();
+        await CanvasManager.ResizeAsync(LayerService.CanvasWidth, LayerService.CanvasHeight);
+        await AutoSaveCurrentProjectAsync();
         await RefreshCanvasAsync();
+    }
+
+    private async Task ExportDefaultAsync()
+    {
+        switch (_settings.DefaultExportFormat.ToLowerInvariant())
+        {
+            case "jpg":
+            case "jpeg":
+                await SaveAsJpeg();
+                break;
+            case "webp":
+                await SaveAsWebP();
+                break;
+            default:
+                await SaveAsPng();
+                break;
+        }
     }
 
     private async Task SaveAsPng()
     {
-        await CanvasManager.DownloadPngAsync($"iew-studio-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+        await CanvasManager.DownloadImageAsync("png", $"iew-studio-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+    }
+
+    private async Task SaveAsJpeg()
+    {
+        await CanvasManager.DownloadImageAsync("jpg", $"iew-studio-{DateTime.Now:yyyyMMdd-HHmmss}.jpg", 0.92);
+    }
+
+    private async Task SaveAsWebP()
+    {
+        await CanvasManager.DownloadImageAsync("webp", $"iew-studio-{DateTime.Now:yyyyMMdd-HHmmss}.webp", 0.92);
+    }
+
+    private async Task OpenProjectsDialogAsync()
+    {
+        CloseMenu();
+        _savedProjects = await ProjectStorageService.GetProjectsAsync();
+        _isOpenProjectsDialogOpen = true;
+    }
+
+    private Task SaveProjectAsAsync()
+    {
+        CloseMenu();
+        _isSaveCopyMode = false;
+        _pendingProjectName = _currentProjectId.HasValue ? _currentProjectName : $"Проект {DateTime.Now:dd.MM.yyyy HH:mm}";
+        _isSaveDialogOpen = true;
+        return Task.CompletedTask;
+    }
+
+    private Task SaveProjectCopyAsync()
+    {
+        CloseMenu();
+        _isSaveCopyMode = true;
+        _pendingProjectName = _currentProjectId.HasValue ? $"{_currentProjectName} копия" : $"Копия {DateTime.Now:dd.MM.yyyy HH:mm}";
+        _isSaveDialogOpen = true;
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveProjectAsync()
+    {
+        CloseMenu();
+        if (!_currentProjectId.HasValue)
+        {
+            await SaveProjectAsAsync();
+            return;
+        }
+
+        var snapshot = LayerService.CreateProjectSnapshot(_currentProjectName, ToolSettings, ToolManager.GetCurrentTool()?.Name ?? "Кисть", ViewState, _currentProjectId, _currentProjectCreatedAtUtc);
+        await ProjectStorageService.SaveProjectAsync(snapshot);
+        _savedProjects = await ProjectStorageService.GetProjectsAsync();
+    }
+
+    private async Task ConfirmSaveProjectAsync()
+    {
+        var targetName = string.IsNullOrWhiteSpace(_pendingProjectName) ? $"Проект {DateTime.Now:dd.MM.yyyy HH:mm}" : _pendingProjectName.Trim();
+        var targetId = (!_isSaveCopyMode && _currentProjectId.HasValue) ? _currentProjectId : Guid.NewGuid();
+        var createdAt = (!_isSaveCopyMode && _currentProjectCreatedAtUtc.HasValue) ? _currentProjectCreatedAtUtc : DateTime.UtcNow;
+
+        var snapshot = LayerService.CreateProjectSnapshot(targetName, ToolSettings, ToolManager.GetCurrentTool()?.Name ?? "Кисть", ViewState, targetId, createdAt);
+        await ProjectStorageService.SaveProjectAsync(snapshot);
+        _savedProjects = await ProjectStorageService.GetProjectsAsync();
+
+        if (!_isSaveCopyMode)
+        {
+            _currentProjectId = snapshot.Id;
+            _currentProjectName = snapshot.Name;
+            _currentProjectCreatedAtUtc = snapshot.CreatedAtUtc;
+        }
+
+        CloseAllDialogs();
+    }
+
+    private async Task OpenSavedProjectAsync(Guid projectId)
+    {
+        var project = await ProjectStorageService.GetProjectAsync(projectId);
+        if (project == null)
+        {
+            return;
+        }
+
+        LayerService.LoadProject(project);
+        ToolSettings = project.ToolSettings.Clone();
+        ViewState = project.ViewState.Clone();
+        ToolManager.SetCurrentTool(project.CurrentTool);
+        _currentProjectId = project.Id;
+        _currentProjectCreatedAtUtc = project.CreatedAtUtc;
+        _currentProjectName = project.Name;
+        CloseAllDialogs();
+        await CanvasManager.ResizeAsync(LayerService.CanvasWidth, LayerService.CanvasHeight);
+        await RefreshCanvasAsync();
+    }
+
+    private async Task DeleteSavedProjectAsync(Guid projectId)
+    {
+        await ProjectStorageService.DeleteProjectAsync(projectId);
+        _savedProjects = await ProjectStorageService.GetProjectsAsync();
+
+        if (_currentProjectId == projectId)
+        {
+            _currentProjectId = null;
+            _currentProjectCreatedAtUtc = null;
+            _currentProjectName = "Несохранённый проект";
+        }
+    }
+
+    private void OpenSettingsDialog()
+    {
+        CloseMenu();
+        _settingsTab = "general";
+        _isSettingsDialogOpen = true;
+    }
+
+    private void ShowGeneralSettings() => _settingsTab = "general";
+    private void ShowLanguageSettings() => _settingsTab = "language";
+    private void ShowHotkeysSettings() => _settingsTab = "hotkeys";
+
+    private async Task SaveSettingsAsync()
+    {
+        _settings.ZoomStep = Math.Clamp(_settings.ZoomStep, 0.05, 1);
+        await SettingsService.SaveAsync(_settings);
+        await AutoSaveCurrentProjectAsync();
+        CloseAllDialogs();
+        await RefreshCanvasAsync();
+    }
+
+    private void ResetHotkeys()
+    {
+        _settings.Hotkeys = HotkeySettings.CreateDefault();
+    }
+
+    private void CloseAllDialogs()
+    {
+        _isOpenProjectsDialogOpen = false;
+        _isSaveDialogOpen = false;
+        _isSettingsDialogOpen = false;
+        CloseMenu();
+    }
+
+    private async Task AutoSaveCurrentProjectAsync()
+    {
+        if (!_settings.AutoSaveProjects || !_currentProjectId.HasValue)
+        {
+            return;
+        }
+
+        var snapshot = LayerService.CreateProjectSnapshot(_currentProjectName, ToolSettings, ToolManager.GetCurrentTool()?.Name ?? "Кисть", ViewState, _currentProjectId, _currentProjectCreatedAtUtc);
+        await ProjectStorageService.SaveProjectAsync(snapshot);
+        _savedProjects = await ProjectStorageService.GetProjectsAsync();
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape")
+        {
+            CloseAllDialogs();
+            await RefreshCanvasAsync();
+            return;
+        }
+
+        if (_isOpenProjectsDialogOpen || _isSaveDialogOpen || _isSettingsDialogOpen)
+        {
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.OpenProjects))
+        {
+            await OpenProjectsDialogAsync();
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.Save))
+        {
+            await SaveProjectAsync();
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.SaveAs))
+        {
+            await SaveProjectAsAsync();
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.SaveCopy))
+        {
+            await SaveProjectCopyAsync();
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.Undo))
+        {
+            await Undo();
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.Redo))
+        {
+            await Redo();
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.Settings))
+        {
+            OpenSettingsDialog();
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.ZoomIn))
+        {
+            ZoomIn();
+            await RefreshCanvasAsync();
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.ZoomOut))
+        {
+            ZoomOut();
+            await RefreshCanvasAsync();
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.PanLeft))
+        {
+            PanLeft();
+            await RefreshCanvasAsync();
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.PanRight))
+        {
+            PanRight();
+            await RefreshCanvasAsync();
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.PanUp))
+        {
+            PanUp();
+            await RefreshCanvasAsync();
+            return;
+        }
+
+        if (IsShortcutMatch(args, _settings.Hotkeys.PanDown))
+        {
+            PanDown();
+            await RefreshCanvasAsync();
+        }
+    }
+
+    private static bool IsShortcutMatch(KeyboardEventArgs args, string configuredShortcut)
+    {
+        return string.Equals(BuildShortcut(args), NormalizeShortcut(configuredShortcut), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildShortcut(KeyboardEventArgs args)
+    {
+        var parts = new List<string>();
+        if (args.CtrlKey)
+        {
+            parts.Add("Ctrl");
+        }
+
+        if (args.AltKey)
+        {
+            parts.Add("Alt");
+        }
+
+        if (args.ShiftKey)
+        {
+            parts.Add("Shift");
+        }
+
+        var key = NormalizeKey(args.Key);
+        if (!string.IsNullOrWhiteSpace(key) && key is not "Ctrl" and not "Alt" and not "Shift")
+        {
+            parts.Add(key);
+        }
+
+        return string.Join("+", parts);
+    }
+
+    private static string NormalizeShortcut(string shortcut)
+    {
+        var items = shortcut.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(NormalizeKey)
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .ToList();
+
+        var modifiers = new List<string>();
+        if (items.Contains("Ctrl", StringComparer.OrdinalIgnoreCase))
+        {
+            modifiers.Add("Ctrl");
+        }
+
+        if (items.Contains("Alt", StringComparer.OrdinalIgnoreCase))
+        {
+            modifiers.Add("Alt");
+        }
+
+        if (items.Contains("Shift", StringComparer.OrdinalIgnoreCase))
+        {
+            modifiers.Add("Shift");
+        }
+
+        var key = items.LastOrDefault(item => item is not "Ctrl" and not "Alt" and not "Shift");
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            modifiers.Add(key);
+        }
+
+        return string.Join("+", modifiers);
+    }
+
+    private static string NormalizeKey(string? key)
+    {
+        return key switch
+        {
+            null => string.Empty,
+            "Control" or "Ctrl" => "Ctrl",
+            "Shift" => "Shift",
+            "Alt" => "Alt",
+            "ArrowLeft" => "ArrowLeft",
+            "ArrowRight" => "ArrowRight",
+            "ArrowUp" => "ArrowUp",
+            "ArrowDown" => "ArrowDown",
+            "Add" or "+" => "=",
+            "Subtract" or "Minus" => "-",
+            _ when key.Length == 1 => key.ToUpperInvariant(),
+            _ => key
+        };
     }
 }
